@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Колесо Фортуны</title>
+    <!-- Подключаем Telegram WebApp API для интеграции с ТГ (если нужно) -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1a1a2e;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            margin: 0;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            color: #e94560;
+            margin-bottom: 20px;
+        }
+
+        /* Контейнер для управления объектами */
+        .controls {
+            background: #162447;
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 360px;
+            margin-bottom: 20px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        input {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 6px;
+            background: #0f3460;
+            color: white;
+            font-size: 16px;
+        }
+
+        input:focus {
+            outline: 2px solid #e94560;
+        }
+
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.2s;
+            font-size: 14px;
+        }
+
+        .btn-add { background-color: #4ecc71; color: white; }
+        .btn-add:hover { background-color: #2ecc71; }
+
+        .btn-del { background-color: #e74c3c; color: white; }
+        .btn-del:hover { background-color: #c0392b; }
+
+        .btn-spin {
+            background-color: #e94560;
+            color: white;
+            font-size: 18px;
+            padding: 12px 30px;
+            border-radius: 25px;
+            margin-top: 20px;
+            box-shadow: 0 4px 15px rgba(233, 69, 96, 0.4);
+        }
+        .btn-spin:disabled { background-color: #555; cursor: not-allowed; box-shadow: none; }
+
+        /* Список объектов */
+        .object-list {
+            max-height: 100px;
+            overflow-y: auto;
+            font-size: 14px;
+            background: #0f3460;
+            padding: 8px;
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        .list-item {
+            padding: 4px 8px;
+            border-bottom: 1px solid #162447;
+        }
+        .list-item:last-child { border: none; }
+
+        /* Стили Колеса */
+        .wheel-container {
+            position: relative;
+            width: 300px;
+            height: 300px;
+            margin-top: 10px;
+        }
+
+        /* Стрелка указателя */
+        .pointer {
+            position: absolute;
+            top: -15px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 15px solid transparent;
+            border-right: 15px solid transparent;
+            border-top: 25px solid #e94560;
+            z-index: 10;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            transition: transform 4s cubic-bezier(0.1, 0.8, 0.3, 1);
+        }
+
+        /* Окно результата */
+        .result {
+            margin-top: 15px;
+            font-size: 20px;
+            font-weight: bold;
+            color: #4ecc71;
+            min-height: 30px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Колесо Фортуны 🎡</h1>
+
+    <!-- Панель управления -->
+    <div class="controls">
+        <div class="input-group">
+            <input type="text" id="objInput" placeholder="Название объекта...">
+            <button class="btn-add" onclick="addObject()">Добавить</button>
+            <button class="btn-del" onclick="deleteObject()">Удалить</button>
+        </div>
+        <div style="font-size: 12px; color: #bbb;">Текущие объекты:</div>
+        <div class="object-list" id="objectList">Список пуст</div>
+    </div>
+
+    <!-- Колесо -->
+    <div class="wheel-container">
+        <div class="pointer"></div>
+        <canvas id="wheelCanvas" width="300" height="300"></canvas>
+    </div>
+
+    <button class="btn-spin" id="spinBtn" onclick="spinWheel()">КРУТИТЬ!</button>
+
+    <div class="result" id="resultDisplay"></div>
+
+    <script>
+        // Инициализация Telegram WebApp (чтобы бот корректно подстраивался под тему ТГ)
+        if (window.Telegram && window.Telegram.WebApp) {
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
+        }
+
+        // Стартовый массив объектов
+        let objects = ["Пицца", "Суши", "Бургер", "Салат"];
+
+        const canvas = document.getElementById("wheelCanvas");
+        const ctx = canvas.getContext("2d");
+        let currentRotation = 0;
+        let isSpinning = false;
+
+        // Генерация приятных цветов для секторов
+        function getColor(index, total) {
+            return `hsl(${(index * 360) / total}, 70%, 50%)`;
+        }
+
+        // Функция отрисовки колеса на холсте Canvas
+        function drawWheel() {
+            const size = canvas.width;
+            const center = size / 2;
+            const radius = center - 5;
+
+            ctx.clearRect(0, 0, size, size);
+
+            if (objects.length === 0) {
+                ctx.fillStyle = "#555";
+                ctx.beginPath();
+                ctx.arc(center, center, radius, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = "white";
+                ctx.font = "16px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText("Добавьте объекты", center, center);
+                document.getElementById("spinBtn").disabled = true;
+                return;
+            }
+
+            document.getElementById("spinBtn").disabled = false;
+            const arcSize = (2 * Math.PI) / objects.length;
+
+            objects.forEach((obj, i) => {
+                const angle = i * arcSize;
+
+                // Рисуем сектор
+                ctx.fillStyle = getColor(i, objects.length);
+                ctx.beginPath();
+                ctx.moveTo(center, center);
+                ctx.arc(center, center, radius, angle, angle + arcSize);
+                ctx.lineTo(center, center);
+                ctx.fill();
+                ctx.stroke();
+
+                // Пишем текст
+                ctx.save();
+                ctx.translate(center, center);
+                ctx.rotate(angle + arcSize / 2);
+                ctx.textAlign = "right";
+                ctx.fillStyle = "white";
+                ctx.font = "bold 14px Arial";
+                // Обрезаем длинный текст, чтобы не вылезал
+                const text = obj.length > 10 ? obj.substring(0, 10) + '...' : obj;
+                ctx.fillText(text, radius - 15, 5);
+                ctx.restore();
+            });
+        }
+
+        // Обновление текстового списка на экране
+        function updateListView() {
+            const listDiv = document.getElementById("objectList");
+            if (objects.length === 0) {
+                listDiv.innerHTML = "Список пуст";
+                return;
+            }
+            listDiv.innerHTML = objects.map(obj => `<div class="list-item">• ${obj}</div>`).join('');
+        }
+
+        // Логика ДОБАВЛЕНИЯ по названию
+        function addObject() {
+            const input = document.getElementById("objInput");
+            const value = input.value.trim();
+
+            if (value === "") return alert("Введите название!");
+            if (objects.includes(value)) return alert("Такой объект уже есть!");
+
+            objects.push(value);
+            input.value = "";
+
+            updateListView();
+            drawWheel();
+        }
+
+        // Логика УДАЛЕНИЯ по названию
+        function deleteObject() {
+            const input = document.getElementById("objInput");
+            const value = input.value.trim();
+
+            if (value === "") return alert("Введите название для удаления!");
+
+            const index = objects.indexOf(value);
+            if (index === -1) return alert("Объект с таким названием не найден.");
+
+            objects.splice(index, 1);
+            input.value = "";
+
+            updateListView();
+            drawWheel();
+        }
+
+        // Логика ВРАЩЕНИЯ колеса
+        function spinWheel() {
+            if (isSpinning || objects.length === 0) return;
+
+            isSpinning = true;
+            document.getElementById("resultDisplay").innerText = "Колесо крутится... 🌀";
+            document.getElementById("spinBtn").disabled = true;
+
+            // Генерируем случайное количество оборотов + случайный угол
+            const totalDegrees = 1800 + Math.floor(Math.random() * 360);
+            currentRotation += totalDegrees;
+
+            // Поворачиваем колесо с помощью CSS анимации
+            canvas.style.transform = `rotate(-${currentRotation}deg)`;
+
+            // Вычисляем победителя по окончании анимации (4 секунды)
+            setTimeout(() => {
+                isSpinning = false;
+                document.getElementById("spinBtn").disabled = false;
+
+                // Расчет индекса выпавшего сектора (учитываем, что стрелка сверху, т.е. на 270 градусах)
+                const actualDegrees = currentRotation % 360;
+                const arcSizeDeg = 360 / objects.length;
+
+                // Корректировка угла под верхний указатель
+                let winnerIndex = Math.floor(((actualDegrees + 90) % 360) / arcSizeDeg);
+                // Разворачиваем индекс, так как колесо крутится по часовой стрелке
+                winnerIndex = objects.length - 1 - winnerIndex;
+                if (winnerIndex < 0) winnerIndex = objects.length - 1;
+                if (winnerIndex >= objects.length) winnerIndex = 0;
+
+                const winner = objects[winnerIndex];
+                document.getElementById("resultDisplay").innerText = `🎉 Выпало: ${winner}`;
+
+                // Если запущено в Telegram, можно отправить результат боту:
+                // if (window.Telegram && window.Telegram.WebApp) {
+                //     Telegram.WebApp.sendData(`Победитель: ${winner}`);
+                // }
+            }, 4000);
+        }
+
+        // Первичный запуск отрисовки
+        updateListView();
+        drawWheel();
+    </script>
+</body>
+</html>
